@@ -62,19 +62,41 @@ func main() {
 			fmt.Printf("❌ Нет товаров\n")
 		}
 
-		time.Sleep(1 * time.Second)
+		fmt.Println("  Ждем 10 секунд перед следующей категорией...")
+		time.Sleep(10 * time.Second)
 	}
 }
 
 func fetchCategory(categoryID int, categoryName string) []ProductResult {
 	var allProducts []ProductResult
+	maxRetries := 3
 
 	for offset := 0; offset < 10000; offset += 40 {
 		fmt.Printf("  Загрузка offset=%d...\n", offset)
 
-		products, total, err := fetchPage(categoryID, offset)
-		if err != nil {
+		var products []ProductResult
+		var total int
+		var err error
+
+		// Повторные попытки при 429 ошибке
+		for retry := 0; retry < maxRetries; retry++ {
+			products, total, err = fetchPage(categoryID, offset)
+			if err == nil {
+				break
+			}
+
+			if err.Error() == "rate limit" {
+				waitTime := time.Duration(retry+1) * 5 * time.Second
+				fmt.Printf("  ⚠️ Rate limit, ждем %v...\n", waitTime)
+				time.Sleep(waitTime)
+				continue
+			}
+
 			fmt.Printf("  Ошибка: %v\n", err)
+			return allProducts
+		}
+
+		if err != nil {
 			break
 		}
 
@@ -89,7 +111,7 @@ func fetchCategory(categoryID int, categoryName string) []ProductResult {
 			break
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(2 * time.Second)
 	}
 
 	return allProducts
@@ -157,6 +179,10 @@ func fetchPage(categoryID, offset int) ([]ProductResult, int, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == 429 {
+		return nil, 0, fmt.Errorf("rate limit")
+	}
+
 	if resp.StatusCode != 200 {
 		return nil, 0, fmt.Errorf("статус: %d", resp.StatusCode)
 	}
@@ -183,7 +209,7 @@ func fetchPage(categoryID, offset int) ([]ProductResult, int, error) {
 		product := ProductResult{
 			Name:  item.Name,
 			Price: fmt.Sprintf("%.2f ₽", price),
-			URL:   fmt.Sprintf("https://lenta.com/product/%d-%s/", item.ID, item.Slug),
+			URL:   fmt.Sprintf("https://lenta.com/product/%s-%d/", item.Slug, item.ID),
 		}
 		products = append(products, product)
 	}
